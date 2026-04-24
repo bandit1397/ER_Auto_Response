@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>상황실</title>
+</head>
+<body>
+
+<input id="reqId" placeholder="REQ-자동">
+<input id="summary" placeholder="환자">
+<input id="eta" placeholder="ETA">
+<input id="hosp" placeholder="A병원,B병원">
+
+<button onclick="send()">요청</button>
+
+<div id="result"></div>
+
+<script>
+const SERVER = "http://localhost:5000";
+
+async function send(){
+  const requestID = document.getElementById('reqId').value || "REQ-"+Date.now();
+  const summary = document.getElementById('summary').value;
+  const eta = document.getElementById('eta').value;
+
+  // ⭐ 핵심 수정 부분
+  const hospitals = document.getElementById('hosp')
+      .value
+      .split(',')
+      .map(h => h.trim());   // 👈 이거 반드시 필요
+
+  console.log("보냄:", {requestID, summary, eta, hospitals});
+
+  await fetch(SERVER+"/request",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({requestID,summary,eta,hospitals})
+  });
+
+  check(requestID);
+}
+
+async function check(id){
+  setInterval(async ()=>{
+    const res = await fetch(SERVER+"/status/"+id);
+    const data = await res.json();
+
+    document.getElementById('result').innerHTML =
+      data.map(d=>`${d.hospital} : ${d.response||'대기'}`).join("<br>");
+  },3000);
+}
+</script>
+
+</body>
+</html>
