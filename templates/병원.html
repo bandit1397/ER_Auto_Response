@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>병원</title>
+</head>
+<body>
+
+<h1 id="info">대기중</h1>
+
+<button onclick="send('가능')">가능</button>
+<button onclick="send('불가')">불가</button>
+
+<script>
+const SERVER = "http://localhost:5000";
+const HOSPITAL = "A병원";
+
+let current = null;
+
+async function poll(){
+  try {
+    const res = await fetch(SERVER+"/latest/"+HOSPITAL);
+    const data = await res.json();
+
+    if(data.requestID && (!current || current!==data.requestID)){
+      current = data.requestID;
+      document.getElementById('info').innerText =
+        data.summary + " / " + data.eta;
+
+      alert("응급 요청!");
+    }
+  } catch (e) {
+    console.log("poll error:", e);
+  }
+}
+
+async function send(r){
+  if(!current) return;
+
+  await fetch(`${SERVER}/response?requestID=${current}&hospital=${HOSPITAL}&response=${r}`);
+}
+
+setInterval(poll,3000);
+</script>
+
+</body>
+</html>
