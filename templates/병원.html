@@ -4,43 +4,223 @@
 <meta charset="utf-8">
 <title>병원</title>
 </head>
-<body>
+
+<body onload="init()">
 
 <h1 id="info">대기중</h1>
 
-<button onclick="send('가능')">가능</button>
-<button onclick="send('불가')">불가</button>
+<button id="okBtn" onclick="send('가능')" disabled>가능</button>
+<button id="noBtn" onclick="send('불가')" disabled>불가</button>
 
 <script>
+
 const SERVER = "http://localhost:5000";
-const HOSPITAL = "A병원";
+const HOSPITAL = "{{ hospital }}";
 
 let current = null;
+let handled = new Set();
 
+let audioCtx = null;
+let beepInterval = null;
+
+let received = false;
+let confirmed = false;
+let notified = false;
+
+// =========================
+// 🔔 초기화 (알림 권한 요청)
+// =========================
+function init(){
+  if ("Notification" in window) {
+    Notification.requestPermission();
+  }
+
+  // 🔊 오디오 권한 unlock (브라우저 제한 대응)
+  document.body.addEventListener("click", () => {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    ctx.resume();
+  }, { once: true });
+}
+
+// =========================
+// 🔘 버튼 제어
+// =========================
+function setButtons(state){
+  document.getElementById("okBtn").disabled = !state;
+  document.getElementById("noBtn").disabled = !state;
+}
+
+// =========================
+// 🔊 브라우저 알림
+// =========================
+function notify(reqID, summary){
+
+  if(Notification.permission === "granted"){
+    const n = new Notification("🚨 응급 요청 도착", {
+      body: `[${reqID}] ${summary}`
+    });
+
+    n.onclick = () => window.focus();
+  }
+
+  const audio = new Audio("alert.mp3");
+  audio.play().catch(()=>{});
+}
+
+// =========================
+// 🚨 사이렌 시작 (삐삐삐)
+// =========================
+function startBeep(){
+
+  if(audioCtx) return; // 중복 방지
+
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+  beepInterval = setInterval(() => {
+
+    const oscillator = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+
+    oscillator.type = "square";      // 🔥 기계음
+    oscillator.frequency.value = 1000; // 삐 소리
+
+    gain.gain.value = 0.2;
+
+    oscillator.connect(gain);
+    gain.connect(audioCtx.destination);
+
+    oscillator.start();
+
+    setTimeout(() => {
+      oscillator.stop();
+    }, 200);
+
+  }, 400);
+}
+
+// =========================
+// 🛑 사이렌 종료
+// =========================
+function stopBeep(){
+
+  clearInterval(beepInterval);
+  beepInterval = null;
+
+  if(audioCtx){
+    audioCtx.close();
+    audioCtx = null;
+  }
+}
+
+// =========================
+// 🔄 폴링
+// =========================
 async function poll(){
   try {
-    const res = await fetch(SERVER+"/latest/"+HOSPITAL);
+
+    const res = await fetch(SERVER + "/latest/" + HOSPITAL);
     const data = await res.json();
 
-    if(data.requestID && (!current || current!==data.requestID)){
-      current = data.requestID;
-      document.getElementById('info').innerText =
-        data.summary + " / " + data.eta;
-
-      alert("응급 요청!");
+    if(!data.requestID){
+      if(!current){
+        document.getElementById('info').innerText = "대기중";
+        setButtons(false);
+      }
+      return;
     }
-  } catch (e) {
+
+    if(handled.has(data.requestID)) return;
+    if(current === data.requestID) return;
+
+    // =========================
+    // 1️⃣ 요청 수신
+    // =========================
+    current = data.requestID;
+    received = true;
+    confirmed = false;
+    notified = false;
+
+    setButtons(false);
+
+    document.getElementById('info').innerHTML =
+      `📌 [${data.requestID}]<br>
+       ${data.summary} / ${data.eta}<br>
+       <b style="color:gray">요청 수신됨 (확인 대기중)</b>`;
+
+    // =========================
+    // 2️⃣ 알림 + 사이렌 시작
+    // =========================
+    if(!notified){
+
+      notify(data.requestID, data.summary);
+      startBeep();          // 🚨 삐삐삐 시작
+
+      notified = true;
+    }
+
+    alert(`🚨 응급 요청 도착!\n[${data.requestID}]`);
+
+    // =========================
+    // 3️⃣ 응답 가능 상태
+    // =========================
+    confirmed = true;
+    setButtons(true);
+
+    document.getElementById('info').innerHTML =
+      `🚨 [${data.requestID}]<br>
+       ${data.summary} / ${data.eta}<br>
+       <b style="color:green">응답 가능 상태</b>`;
+
+  } catch(e){
     console.log("poll error:", e);
   }
 }
 
+// =========================
+// 📩 응답 전송
+// =========================
 async function send(r){
-  if(!current) return;
 
-  await fetch(`${SERVER}/response?requestID=${current}&hospital=${HOSPITAL}&response=${r}`);
+  if(!current || !confirmed){
+    alert("먼저 응급 요청을 확인하세요");
+    return;
+  }
+
+  const res = await fetch(
+    `${SERVER}/response?requestID=${current}&hospital=${HOSPITAL}&response=${r}`
+  );
+
+  const text = await res.text();
+
+  if(text === "already responded"){
+    alert("이미 처리된 요청입니다");
+    return;
+  }
+
+  // =========================
+  // ✔ 응답 완료
+  // =========================
+  handled.add(current);
+
+  stopBeep();   // 🛑 사이렌 종료
+
+  document.getElementById('info').innerText =
+    "응답 완료 (" + r + ")";
+
+  setButtons(false);
+
+  setTimeout(()=>{
+    document.getElementById('info').innerText = "대기중";
+  },1500);
+
+  current = null;
+  received = false;
+  confirmed = false;
+  notified = false;
 }
 
-setInterval(poll,3000);
+setInterval(poll, 3000);
+
 </script>
 
 </body>
