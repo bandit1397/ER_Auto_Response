@@ -3,8 +3,38 @@
 <head>
 <meta charset="utf-8">
 <title>상황실</title>
+
+<style>
+body {
+  font-family: Arial;
+  padding: 20px;
+}
+
+input {
+  margin: 5px;
+  padding: 5px;
+}
+
+button {
+  padding: 6px 12px;
+}
+
+#topResult {
+  font-size: 20px;
+  font-weight: bold;
+  margin-top: 20px;
+}
+
+#result {
+  margin-top: 10px;
+  line-height: 1.6;
+}
+</style>
+
 </head>
 <body>
+
+<h2>🚑 상황실</h2>
 
 <input id="reqId" placeholder="REQ-자동">
 <input id="summary" placeholder="환자">
@@ -13,21 +43,30 @@
 
 <button onclick="send()">요청</button>
 
+<div id="topResult"></div>
 <div id="result"></div>
 
 <script>
 const SERVER = "http://localhost:5000";
 
+let timer = null;   // ⭐ 중복 polling 방지
+
 async function send(){
-  const requestID = document.getElementById('reqId').value || "REQ-"+Date.now();
+  let requestID = document.getElementById('reqId').value;
+
+  // ⭐ 자동 생성 + 화면 반영
+  if(!requestID){
+    requestID = "REQ-" + Date.now();
+    document.getElementById('reqId').value = requestID;  // 👈 핵심
+  }
+
   const summary = document.getElementById('summary').value;
   const eta = document.getElementById('eta').value;
 
-  // ⭐ 핵심 수정 부분
   const hospitals = document.getElementById('hosp')
       .value
       .split(',')
-      .map(h => h.trim());   // 👈 이거 반드시 필요
+      .map(h => h.trim());
 
   console.log("보냄:", {requestID, summary, eta, hospitals});
 
@@ -37,16 +76,51 @@ async function send(){
     body:JSON.stringify({requestID,summary,eta,hospitals})
   });
 
+  if(timer) clearInterval(timer);
   check(requestID);
 }
 
-async function check(id){
-  setInterval(async ()=>{
-    const res = await fetch(SERVER+"/status/"+id);
-    const data = await res.json();
 
-    document.getElementById('result').innerHTML =
-      data.map(d=>`${d.hospital} : ${d.response||'대기'}`).join("<br>");
+
+
+function check(id){
+  timer = setInterval(async ()=>{
+    try {
+      const res = await fetch(SERVER+"/status/"+id);
+      const data = await res.json();
+
+      if(!data.length){
+        document.getElementById('result').innerHTML = "데이터 없음";
+        return;
+      }
+
+      // ⭐ 가장 중요한 기능: 가능 병원 찾기
+      const ok = data.find(d => d.response === '가능');
+
+      if(ok){
+        document.getElementById('topResult').innerHTML =
+          `🏥 수용 가능 병원: <span style="color:green">${ok.hospital}</span> (${ok.requestID})`;
+      } else {
+        document.getElementById('topResult').innerHTML = "";
+      }
+
+      // ⭐ 전체 상태 표시 (색상 포함)
+      document.getElementById('result').innerHTML =
+        data.map(d => {
+
+          let color = 'black';
+          if(d.response === '가능') color = 'green';
+          else if(d.response === '불가') color = 'red';
+
+          return `<span style="color:${color}">
+            ${d.hospital} : ${d.response || '대기'} (${d.requestID})
+          </span>`;
+        }).join("<br>");
+
+    } catch (e){
+      console.log("상태 조회 오류:", e);
+    }
+
   },3000);
 }
 </script>
