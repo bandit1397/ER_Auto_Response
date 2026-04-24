@@ -7,11 +7,15 @@ print("🔥 server.py 실행됨")
 
 app = Flask(__name__)
 CORS(app)
+app.url_map.strict_slashes = False
 
+# -------------------------------
 # DB 초기화
+# -------------------------------
 def init_db():
     conn = sqlite3.connect('hospital.db')
     cur = conn.cursor()
+
     cur.execute("""
     CREATE TABLE IF NOT EXISTS requests (
         requestID TEXT,
@@ -19,20 +23,24 @@ def init_db():
         summary TEXT,
         eta TEXT,
         response TEXT,
-        time TEXT
+        time TEXT,
+        UNIQUE(requestID, hospital)
     )
     """)
+
     conn.commit()
     conn.close()
 
 init_db()
 
+# -------------------------------
 # 🟢 요청 생성
+# -------------------------------
 @app.route('/request', methods=['POST'])
 def create_request():
     data = request.json
 
-    print("🔥 REQUEST 들어옴:", data)  
+    print("🔥 REQUEST 들어옴:", data)
     print("🔥 hospitals:", data.get('hospitals'))
 
     conn = sqlite3.connect('hospital.db')
@@ -40,13 +48,13 @@ def create_request():
 
     for h in data['hospitals']:
         cur.execute("""
-        INSERT INTO requests (requestID, hospital, summary, eta, response, time)
+        INSERT OR IGNORE INTO requests (requestID, hospital, summary, eta, response, time)
         VALUES (?, ?, ?, ?, '', ?)
         """, (
             data['requestID'],
-            h,
-            data.get('summary',''),
-            data.get('eta',''),
+            h.strip(),
+            data.get('summary', ''),
+            data.get('eta', ''),
             datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         ))
 
@@ -55,7 +63,9 @@ def create_request():
 
     return jsonify({"status": "ok"})
 
+# -------------------------------
 # 🟢 응답 처리 (중복 방지)
+# -------------------------------
 @app.route('/response')
 def response():
     requestID = request.args.get('requestID')
@@ -72,6 +82,7 @@ def response():
 
     row = cur.fetchone()
 
+    # 이미 응답했으면 차단
     if row and row[0]:
         conn.close()
         return "already responded"
@@ -92,36 +103,42 @@ def response():
 
     return "ok"
 
-
-# 🟢 상태 조회
+# -------------------------------
+# 🟢 상태 조회 (상황실)
+# -------------------------------
 @app.route('/status/<requestID>')
 def status(requestID):
     conn = sqlite3.connect('hospital.db')
     cur = conn.cursor()
 
     cur.execute("""
-    SELECT hospital, summary, eta, response
+    SELECT hospital, summary, eta, response, requestID, time
     FROM requests
     WHERE requestID=?
+    ORDER BY hospital, datetime(time) DESC
     """, (requestID,))
 
     rows = cur.fetchall()
     conn.close()
 
-    result = [
-        {
-            "hospital": r[0],
-            "summary": r[1],
-            "eta": r[2],
-            "response": r[3]
-        }
-        for r in rows
-    ]
+    latest = {}
 
-    return jsonify(result)
+    for r in rows:
+        hospital = r[0]
+        if hospital not in latest:
+            latest[hospital] = {
+                "hospital": r[0],
+                "summary": r[1],
+                "eta": r[2],
+                "response": r[3],
+                "requestID": r[4]
+            }
 
+    return jsonify(list(latest.values()))
 
+# -------------------------------
 # 🟢 병원용 최신 요청
+# -------------------------------
 @app.route('/latest/<hospital>')
 def latest(hospital):
     conn = sqlite3.connect('hospital.db')
@@ -130,7 +147,7 @@ def latest(hospital):
     cur.execute("""
     SELECT requestID, summary, eta, response
     FROM requests
-    WHERE hospital=?
+    WHERE hospital=? AND response=''
     ORDER BY time DESC
     LIMIT 1
     """, (hospital,))
@@ -148,26 +165,44 @@ def latest(hospital):
         "response": row[3]
     })
 
+# -------------------------------
+# 🟢 병원 화면
+# -------------------------------
+@app.route('/hospital/<name>')
+def hospital(name):
+    return render_template('병원.html', hospital=name)
 
-# 👉 여기 추가하면 됩니다 ⭐
-@app.route('/hospital')
-def hospital():
-    return render_template('병원.html')
-
-
-@app.route('/control')   # 👈 여기 추가
+# -------------------------------
+# 🟢 상황실 화면
+# -------------------------------
+@app.route('/control')
 def control():
     return render_template('상황실.html')
 
+# -------------------------------
+# 🟢 테스트
+# -------------------------------
 @app.route('/test')
 def test():
     return "test ok"
 
+# -------------------------------
+# 🟢 DB 초기화 API (테스트용)
+# -------------------------------
+@app.route('/reset')
+def reset():
+    conn = sqlite3.connect('hospital.db')
+    cur = conn.cursor()
 
+    cur.execute("DELETE FROM requests")
+
+    conn.commit()
+    conn.close()
+
+    return "reset ok"
+
+# -------------------------------
+# 서버 실행
+# -------------------------------
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
-    
-print("👉 현재 실행된 server.py 맞음")
-
-print(cur.execute("SELECT * FROM requests").fetchall())
-
