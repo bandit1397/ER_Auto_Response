@@ -11,5 +11,6 @@ http://localhost:5000/control
 server.py
 
 # “경찰 실전 배포용 100% 안정 버전” (로그 + 장애복구 + 자동재시작)
+# 📱 화면 꺼져 있어도 알림 오는 구조
 # taskkill /F /IM server.exe
 taskkill /F /IM python.exe  // DIST 삭제/ CMD 에서 작업
