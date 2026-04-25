@@ -202,31 +202,6 @@ def latest(hospital):
         "response": row[3]
     })
     
-@app.route('/pending/<hospital>')
-def pending(hospital):
-    conn = sqlite3.connect('hospital.db')
-    cur = conn.cursor()
-
-    cur.execute("""
-    SELECT requestID, summary, eta
-    FROM requests
-    WHERE hospital=? AND response=''
-    ORDER BY time DESC
-    LIMIT 1
-    """, (hospital,))
-
-    row = cur.fetchone()
-    conn.close()
-
-    if not row:
-        return jsonify({})
-
-    return jsonify({
-        "requestID": row[0],
-        "summary": row[1],
-        "eta": row[2]
-    })
-
 # -------------------------------
 # 🟢 화면
 # -------------------------------
