@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>상황실</title>
+
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+
+<style>
+body {
+  font-family: Arial;
+  padding: 20px;
+}
+
+input {
+  margin: 5px;
+  padding: 5px;
+}
+
+button {
+  padding: 6px 12px;
+}
+
+#topResult {
+  font-size: 20px;
+  font-weight: bold;
+  margin-top: 20px;
+}
+
+#result {
+  margin-top: 10px;
+  line-height: 1.6;
+}
+</style>
+
+</head>
+
+<body>
+
+<h2>🚑 상황실</h2>
+
+<input id="reqId" placeholder="REQ-자동">
+<input id="summary" placeholder="환자">
+<input id="eta" placeholder="ETA">
+<input id="hosp" placeholder="A,B,C">
+
+<button onclick="send()">요청</button>
+
+<div id="topResult"></div>
+<div id="result"></div>
+
+<script>
+
+const SERVER = "http://localhost:5000";
+
+let timer = null;
+
+// =========================
+// WebSocket 연결
+// =========================
+const socket = io(SERVER);
+
+// =========================
+// 요청 전송
+// =========================
+async function send(){
+
+  let requestID = document.getElementById('reqId').value;
+
+  if(!requestID){
+    requestID = "REQ-" + Date.now();
+    document.getElementById('reqId').value = requestID;
+  }
+
+  const summary = document.getElementById('summary').value;
+  const eta = document.getElementById('eta').value;
+
+  const hospitals = document.getElementById('hosp')
+    .value
+    .split(',')
+    .map(h => h.trim());
+
+  await fetch(SERVER+"/request",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({requestID,summary,eta,hospitals})
+  });
+
+  if(timer) clearInterval(timer);
+
+  check(requestID);
+}
+
+// =========================
+// WebSocket 실시간 결과 수신
+// =========================
+socket.on("status_update", (data) => {
+
+  updateUI(data);
+
+});
+
+// =========================
+// polling backup (10초)
+// =========================
+function check(id){
+
+  timer = setInterval(async ()=>{
+
+    try {
+
+      const res = await fetch(SERVER+"/status/"+id);
+      const data = await res.json();
+
+      updateUI(data);
+
+    } catch(e){
+      console.log(e);
+    }
+
+  },10000);
+}
+
+// =========================
+// UI 업데이트 공통 함수
+// =========================
+function updateUI(data){
+
+  if(!data || !data.length) return;
+
+  const ok = data.find(d => d.response === '가능');
+
+  if(ok){
+    document.getElementById('topResult').innerHTML =
+      `🏥 수용 가능 병원: <span style="color:green">${ok.hospital}</span> (${ok.requestID})`;
+  } else {
+    document.getElementById('topResult').innerHTML = "";
+  }
+
+  document.getElementById('result').innerHTML =
+    data.map(d => {
+
+      let color = 'black';
+      if(d.response === '가능') color = 'green';
+      else if(d.response === '불가') color = 'red';
+
+      return `<span style="color:${color}">
+        ${d.hospital} : ${d.response || '대기'} (${d.requestID})
+      </span>`;
+    }).join("<br>");
+}
+
+</script>
+
+</body>
+</html>
