@@ -1,0 +1,193 @@
+import os
+import sys
+from flask import Flask, request, jsonify, render_template
+from flask_cors import CORS
+from flask_socketio import SocketIO, join_room
+import sqlite3
+from datetime import datetime, timedelta
+import threading
+import time
+
+print("🔥 server.py 실행됨")
+
+# -------------------------------
+# 📦 PyInstaller 경로 처리
+# -------------------------------
+def resource_path(relative_path):
+    try:
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
+
+# -------------------------------
+# 🧱 Flask 초기화
+# -------------------------------
+app = Flask(
+    __name__,
+    template_folder=resource_path("templates"),
+    static_folder=resource_path("static")
+)
+CORS(app)
+
+socketio = SocketIO(
+    app,
+    cors_allowed_origins="*",
+    async_mode="threading"
+)
+
+# -------------------------------
+# 🗄 DB 경로 (중요!)
+# -------------------------------
+DB_PATH = os.path.join(os.getcwd(), "hospital.db")
+# 👉 실행 폴더에 DB 생성 (읽기/쓰기 안정)
+
+# -------------------------------
+# DB 초기화
+# -------------------------------
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS requests (
+        requestID TEXT,
+        hospital TEXT,
+        summary TEXT,
+        eta TEXT,
+        response TEXT,
+        time TEXT,
+        UNIQUE(requestID, hospital)
+    )
+    """)
+    conn.commit()
+    conn.close()
+
+init_db()
+
+# -------------------------------
+# 🧹 자동 삭제 (threading 유지)
+# -------------------------------
+def cleanup_old_data():
+    while True:
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            cur = conn.cursor()
+
+            cutoff = (datetime.now() - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+
+            cur.execute("""
+            DELETE FROM requests
+            WHERE time < ?
+            """, (cutoff,))
+
+            conn.commit()
+            conn.close()
+
+            print("🧹 오래된 데이터 삭제")
+
+        except Exception as e:
+            print("cleanup error:", e)
+
+        time.sleep(300)
+
+threading.Thread(target=cleanup_old_data, daemon=True).start()
+
+# -------------------------------
+# 🟢 WebSocket
+# -------------------------------
+@socketio.on('join')
+def on_join(data):
+    hospital = data['hospital']
+    join_room(hospital)
+
+# -------------------------------
+# 🟢 요청 생성
+# -------------------------------
+@app.route('/request', methods=['POST'])
+def create_request():
+    data = request.json
+
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+
+    for h in data['hospitals']:
+        hospital = h.strip()
+
+        cur.execute("""
+        INSERT OR IGNORE INTO requests
+        VALUES (?, ?, ?, ?, '', ?)
+        """, (
+            data['requestID'],
+            hospital,
+            data.get('summary', ''),
+            data.get('eta', ''),
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        ))
+
+        socketio.emit("new_request", {
+            "requestID": data['requestID'],
+            "hospital": hospital
+        }, room=hospital)
+
+    conn.commit()
+    conn.close()
+
+    return jsonify({"status": "ok"})
+
+# -------------------------------
+# 🟢 응답 처리
+# -------------------------------
+@app.route('/response')
+def response():
+    requestID = request.args.get('requestID')
+    hospital = request.args.get('hospital')
+    resp = request.args.get('response')
+
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+
+    cur.execute("""
+    UPDATE requests
+    SET response=?, time=?
+    WHERE requestID=? AND hospital=?
+    """, (
+        resp,
+        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        requestID,
+        hospital
+    ))
+
+    conn.commit()
+    conn.close()
+
+    socketio.emit("update_status", {
+        "requestID": requestID,
+        "hospital": hospital,
+        "response": resp
+    })
+
+    return "ok"
+
+# -------------------------------
+# 🟢 화면
+# -------------------------------
+@app.route('/hospital/<name>')
+def hospital(name):
+    return render_template('병원.html', hospital=name)
+
+@app.route('/control')
+def control():
+    return render_template('상황실.html')
+
+# -------------------------------
+# 🚀 실행
+# -------------------------------
+if __name__ == "__main__":
+    print("🚀 Server starting...")
+
+    socketio.run(
+        app,
+        host="0.0.0.0",
+        port=5000,
+        allow_unsafe_werkzeug=True
+    )
