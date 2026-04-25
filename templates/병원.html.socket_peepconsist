@@ -6,15 +6,146 @@
 
 <link rel="manifest" href="/static/manifest.json">
 
+<!-- ✅ 여기 넣기 -->
+<style>
+body {
+  margin: 0;
+  background: #020617;
+  color: white;
+  font-family: 'Segoe UI', Arial;
+}
+
+#header {
+  background: #111827;
+  padding: 15px;
+  font-size: 18px;
+  text-align: center;
+  border-bottom: 2px solid #1f2937;
+}
+
+#container {
+  text-align: center;
+  padding-top: 30px;
+}
+
+#card {
+  margin: auto;
+  width: 320px;
+  padding: 20px;
+  background: #111827;
+  border-radius: 12px;
+  box-shadow: 0 0 20px rgba(255,0,0,0.3);
+  animation: pulse 1.5s infinite;
+}
+
+.hidden {
+  display: none;
+}
+
+#urgent {
+  color: red;
+  font-size: 20px;
+  margin-bottom: 10px;
+}
+
+#reqid {
+  font-size: 22px;
+  margin-bottom: 15px;
+  color: #38bdf8;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 2fr;
+  margin-bottom: 15px;
+}
+
+.label {
+  text-align: left;
+  color: #9ca3af;
+}
+
+.value {
+  text-align: right;
+  font-weight: bold;
+}
+
+#status {
+  margin: 15px 0;
+  font-size: 18px;
+  color: #22c55e;
+}
+
+#buttons button {
+  width: 120px;
+  padding: 12px;
+  margin: 5px;
+  font-size: 16px;
+  border: none;
+  border-radius: 8px;
+}
+
+#okBtn {
+  background: #16a34a;
+}
+
+#noBtn {
+  background: #dc2626;
+}
+
+#standby {
+  margin-top: 50px;
+  font-size: 20px;
+  color: #facc15;
+}
+
+@keyframes pulse {
+  0% { box-shadow: 0 0 10px rgba(255,0,0,0.2); }
+  50% { box-shadow: 0 0 25px rgba(255,0,0,0.6); }
+  100% { box-shadow: 0 0 10px rgba(255,0,0,0.2); }
+}
+</style>
+
 <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 </head>
 
 <body onload="init()">
 
-<h1 id="info">대기중</h1>
+<div id="container">
 
-<button id="okBtn" onclick="send('가능')" disabled>가능</button>
-<button id="noBtn" onclick="send('불가')" disabled>불가</button>
+  <!-- 상단 상태 -->
+  <div id="header">
+    🏥 HOSPITAL: <span id="hospitalName">{{ hospital }}</span>
+  </div>
+
+  <!-- 요청 카드 -->
+  <div id="card" class="hidden">
+
+    <div id="urgent">🚨 EMERGENCY</div>
+
+    <div id="reqid">REQ-000</div>
+
+    <div class="grid">
+      <div class="label">PATIENT</div>
+      <div class="value" id="summary">-</div>
+
+      <div class="label">ETA</div>
+      <div class="value" id="eta">-</div>
+    </div>
+
+    <div id="status">WAITING</div>
+
+    <div id="buttons">
+      <button id="okBtn" onclick="send('가능')" disabled>✔ ACCEPT</button>
+      <button id="noBtn" onclick="send('불가')" disabled>✖ REJECT</button>
+    </div>
+
+  </div>
+
+  <!-- 대기 화면 -->
+  <div id="standby">🟡 STANDBY</div>
+
+</div>
 
 <script>
 
@@ -133,32 +264,27 @@ function stopBeep(){
 function handleRequest(data){
 
   if(!data.requestID) return;
-
   if(handled.has(data.requestID)) return;
   if(current === data.requestID) return;
 
-  // =========================
-  // 상태 업데이트
-  // =========================
   current = data.requestID;
   confirmed = true;
 
   setButtons(true);
 
-  document.getElementById('info').innerHTML =
-    `📌 [${data.requestID}]<br>
-     ${data.summary || ""} / ${data.eta || ""}<br>
-     <b style="color:green">응답 가능 상태</b>`;
+  // ✅ UI 카드 표시
+  document.getElementById("card").classList.remove("hidden");
+  document.getElementById("standby").style.display = "none";
 
-  // =========================
-  // 알림 + 사이렌
-  // =========================
+  document.getElementById("reqid").innerText = data.requestID;
+  document.getElementById("summary").innerText = data.summary || "-";
+  document.getElementById("eta").innerText = data.eta || "-";
+
+  document.getElementById("status").innerText = "WAITING RESPONSE";
+
   notify(data.requestID, data.summary);
   startBeep();
-
-  console.log("🚨 요청 수신:", data.requestID);
 }
-
 // =======================================================
 // 🚨 WebSocket
 // =======================================================
@@ -178,6 +304,8 @@ setInterval(async () => {
 
     const res = await fetch(SERVER + "/latest/" + HOSPITAL);
     const data = await res.json();
+
+    if (!data || !data.requestID) return;  // ⭐ 추가
 
     handleRequest(data);
 
@@ -212,13 +340,24 @@ async function send(r){
 
   stopBeep();
 
-  document.getElementById('info').innerText =
-    "응답 완료 (" + r + ")";
+  // =========================
+  // ✅ 여기 넣는 위치 (핵심)
+  // =========================
+  document.getElementById("status").innerText =
+    "RESPONDED (" + r + ")";
+
+  document.getElementById("card").style.boxShadow =
+    r === "가능"
+    ? "0 0 20px rgba(0,255,0,0.7)"
+    : "0 0 20px rgba(255,0,0,0.7)";
 
   setButtons(false);
 
+  document.getElementById("card").classList.add("hidden");
+  document.getElementById("standby").style.display = "block";
+
   setTimeout(()=>{
-    document.getElementById('info').innerText = "대기중";
+    document.getElementById("status").innerText = "WAITING";
   },1500);
 
   current = null;
