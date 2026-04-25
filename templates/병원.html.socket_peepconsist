@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <title>병원</title>
 
+<link rel="manifest" href="/static/manifest.json">
+
 <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 </head>
 
@@ -34,7 +36,10 @@ let confirmed = false;
 // WebSocket
 // =========================
 const socket = io(SERVER);
-socket.emit("join", { hospital: HOSPITAL });
+
+socket.on("connect", () => {
+  socket.emit("join", { hospital: HOSPITAL });
+});
 
 // =========================
 // 초기화
@@ -49,6 +54,11 @@ function init(){
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
     ctx.resume();
   }, { once: true });
+
+  // 🚨 서비스워커 등록 (여기에 넣기!)
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/static/sw.js');
+  }
 }
 
 // =========================
@@ -70,7 +80,7 @@ function notify(reqID, summary){
     });
   }
 
-  const audio = new Audio("alert.mp3");
+  const audio = new Audio("/static/alert.mp3");
   audio.play().catch(()=>{});
 }
 
