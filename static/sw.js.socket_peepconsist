@@ -1,0 +1,44 @@
+self.addEventListener('install', (event) => {
+  self.skipWaiting();
+});
+
+self.addEventListener('activate', (event) => {
+  event.waitUntil(self.clients.claim());
+});
+
+// =========================
+// 🚨 PUSH 알림 (핵심)
+// =========================
+self.addEventListener('push', function(event) {
+
+  const data = event.data ? event.data.json() : {};
+
+  const title = "🚨 응급환자 요청";
+
+  const options = {
+    body: data.message || "새 응급 요청이 도착했습니다.",
+    icon: "/icon.png",
+    badge: "/icon.png",
+    vibrate: [200, 100, 200, 100, 200],
+    requireInteraction: true,
+    data: {
+      url: data.url || "/"
+    }
+  };
+
+  event.waitUntil(
+    self.registration.showNotification(title, options)
+  );
+});
+
+// =========================
+// 🔔 클릭 시 병원 페이지 열기
+// =========================
+self.addEventListener('notificationclick', function(event) {
+
+  event.notification.close();
+
+  event.waitUntil(
+    clients.openWindow(event.notification.data.url)
+  );
+});
