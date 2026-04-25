@@ -1,0 +1,264 @@
+from flask import Flask, request, jsonify, render_template
+from flask_cors import CORS
+from flask_socketio import SocketIO, join_room, emit
+import sqlite3
+from datetime import datetime
+
+print("🔥 server.py 실행됨")
+
+app = Flask(__name__)
+CORS(app)
+
+# =========================
+# ⭐ WebSocket 추가
+# =========================
+socketio = SocketIO(app, cors_allowed_origins="*")
+
+app.url_map.strict_slashes = False
+
+# -------------------------------
+# DB 초기화
+# -------------------------------
+def init_db():
+    conn = sqlite3.connect('hospital.db')
+    cur = conn.cursor()
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS requests (
+        requestID TEXT,
+        hospital TEXT,
+        summary TEXT,
+        eta TEXT,
+        response TEXT,
+        time TEXT,
+        UNIQUE(requestID, hospital)
+    )
+    """)
+
+    conn.commit()
+    conn.close()
+
+init_db()
+
+# -------------------------------
+# 🟢 WebSocket: 병원 접속 등록
+# -------------------------------
+@socketio.on('join')
+def on_join(data):
+    hospital = data['hospital']
+    print("🟢 병원 접속:", hospital)
+
+    join_room(hospital)
+
+# -------------------------------
+# 🟢 요청 생성 (WebSocket push 추가)
+# -------------------------------
+@app.route('/request', methods=['POST'])
+def create_request():
+    data = request.json
+
+    print("🔥 REQUEST 들어옴:", data)
+
+    conn = sqlite3.connect('hospital.db')
+    cur = conn.cursor()
+
+    for h in data['hospitals']:
+        hospital = h.strip()
+
+        cur.execute("""
+        INSERT OR IGNORE INTO requests
+        (requestID, hospital, summary, eta, response, time)
+        VALUES (?, ?, ?, ?, '', ?)
+        """, (
+            data['requestID'],
+            hospital,
+            data.get('summary', ''),
+            data.get('eta', ''),
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        ))
+
+        # =========================
+        # ⭐ WebSocket 즉시 push
+        # =========================
+        socketio.emit("new_request", {
+            "requestID": data['requestID'],
+            "hospital": hospital,
+            "summary": data.get('summary', ''),
+            "eta": data.get('eta', '')
+        }, room=hospital)
+
+    conn.commit()
+    conn.close()
+
+    return jsonify({"status": "ok"})
+
+# -------------------------------
+# 🟢 응답 처리 (기존 유지 + push 추가)
+# -------------------------------
+@app.route('/response')
+def response():
+    requestID = request.args.get('requestID')
+    hospital = request.args.get('hospital')
+    resp = request.args.get('response')
+
+    conn = sqlite3.connect('hospital.db')
+    cur = conn.cursor()
+
+    cur.execute("""
+    SELECT response FROM requests
+    WHERE requestID=? AND hospital=?
+    """, (requestID, hospital))
+
+    row = cur.fetchone()
+
+    if row and row[0]:
+        conn.close()
+        return "already responded"
+
+    cur.execute("""
+    UPDATE requests
+    SET response=?, time=?
+    WHERE requestID=? AND hospital=?
+    """, (
+        resp,
+        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        requestID,
+        hospital
+    ))
+
+    conn.commit()
+    conn.close()
+
+    # =========================
+    # ⭐ 상황실 실시간 업데이트
+    # =========================
+    socketio.emit("update_status", {
+        "requestID": requestID,
+        "hospital": hospital,
+        "response": resp
+    })
+
+    return "ok"
+
+# -------------------------------
+# 🟢 상태 조회 (상황실 유지)
+# -------------------------------
+@app.route('/status/<requestID>')
+def status(requestID):
+    conn = sqlite3.connect('hospital.db')
+    cur = conn.cursor()
+
+    cur.execute("""
+    SELECT hospital, summary, eta, response, requestID, time
+    FROM requests
+    WHERE requestID=?
+    ORDER BY hospital, datetime(time) DESC
+    """, (requestID,))
+
+    rows = cur.fetchall()
+    conn.close()
+
+    latest = {}
+
+    for r in rows:
+        hospital = r[0]
+        if hospital not in latest:
+            latest[hospital] = {
+                "hospital": r[0],
+                "summary": r[1],
+                "eta": r[2],
+                "response": r[3],
+                "requestID": r[4]
+            }
+
+    return jsonify(list(latest.values()))
+
+# -------------------------------
+# 🟢 병원 polling (15초 fallback 유지)
+# -------------------------------
+@app.route('/latest/<hospital>')
+def latest(hospital):
+    conn = sqlite3.connect('hospital.db')
+    cur = conn.cursor()
+
+    cur.execute("""
+    SELECT requestID, summary, eta, response
+    FROM requests
+    WHERE hospital=? AND response=''
+    ORDER BY time DESC
+    LIMIT 1
+    """, (hospital,))
+
+    row = cur.fetchone()
+    conn.close()
+
+    if not row:
+        return jsonify({})
+
+    return jsonify({
+        "requestID": row[0],
+        "summary": row[1],
+        "eta": row[2],
+        "response": row[3]
+    })
+    
+@app.route('/pending/<hospital>')
+def pending(hospital):
+    conn = sqlite3.connect('hospital.db')
+    cur = conn.cursor()
+
+    cur.execute("""
+    SELECT requestID, summary, eta
+    FROM requests
+    WHERE hospital=? AND response=''
+    ORDER BY time DESC
+    LIMIT 1
+    """, (hospital,))
+
+    row = cur.fetchone()
+    conn.close()
+
+    if not row:
+        return jsonify({})
+
+    return jsonify({
+        "requestID": row[0],
+        "summary": row[1],
+        "eta": row[2]
+    })
+
+# -------------------------------
+# 🟢 화면
+# -------------------------------
+@app.route('/hospital/<name>')
+def hospital(name):
+    return render_template('병원.html', hospital=name)
+
+@app.route('/control')
+def control():
+    return render_template('상황실.html')
+
+# -------------------------------
+# 🟢 테스트
+# -------------------------------
+@app.route('/test')
+def test():
+    return "test ok"
+
+# -------------------------------
+# 🟢 DB 초기화
+# -------------------------------
+@app.route('/reset')
+def reset():
+    conn = sqlite3.connect('hospital.db')
+    cur = conn.cursor()
+    cur.execute("DELETE FROM requests")
+    conn.commit()
+    conn.close()
+    return "reset ok"
+
+# -------------------------------
+# 🚀 실행 (중요: socketio)
+# -------------------------------
+if __name__ == '__main__':
+    socketio.run(app, host='0.0.0.0', port=5000)
